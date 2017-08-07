@@ -1,0 +1,138 @@
+#-*- coding: UTF-8 -*-
+"""
+addAuditNumHourLoader
+"""
+import os
+import os.path
+import time
+import datetime
+import sys
+import re
+from src.utils import df_log as log
+from src.hdfs_downloader import HdfsDownloader
+import json
+from src.mysql_handler import DBHandler
+from src.conf import Conf
+#from conf import file_section_map
+
+
+class publishCommonLoader(object):
+    """
+    """
+    def __init__(self, db_conf, task_time, task_conf):
+        self.db_conf=db_conf
+        self.task_time=task_time
+        self.task_conf=task_conf
+        self.productids = task_conf['productids']
+        self.productid_list = re.split(",", self.productids)
+        self.timenow = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def loadtodb(self, target_file):
+        """
+        写入kpi_data数据库
+        :param target_file: 
+        :return: 
+        """
+        print "success into load function"
+        db_handler = DBHandler(self.db_conf)
+        if not db_handler.on_init():
+            print "db init error."
+            return False
+        print "db init success"
+        
+        if self.task_conf['level'] == 'week':
+            cur_date = time.strptime(self.task_time, "%Y%m%d%H%M%S")
+            cur_week = time.strftime("%w", cur_date)
+            if 3 != int(cur_week):
+                return True
+        # 天级：
+        if self.task_conf['level'] in ['day','week']:
+            file = open(target_file)
+            for line in file.xreadlines():
+                line = line.strip()
+                cloumn_list = re.split("\t", line)
+                # cloumn_list = re.split("\\x01", line)
+                
+
+                if self.productids != "''" and self.task_conf['product_id'] != "''":
+                    if cloumn_list[int(self.task_conf['product_id'])] not in self.productids:
+                        continue
+
+                time_type = self.task_conf['time_type']
+                kpi_key = self.task_conf['kpi_key']
+
+                if self.task_conf['kpi_value'] == "''":
+                    kpi_value = "0"
+                else:
+                    kpi_value = "0" if cloumn_list[int(self.task_conf['kpi_value'])] == \
+                                       "\N" else cloumn_list[int(self.task_conf['kpi_value'])]
+
+                if self.task_conf['tag'] == "''":
+                    tag = "0"
+                elif self.task_conf['tag'] == "aka_hrefuse_dis_day_pinzhuan":
+                    if cloumn_list[2].find(",") > 0:
+                        cut = cloumn_list[2].find(",")
+                        cloumn_list[2] = cloumn_list[2][:cut].strip()
+                    tag = "0" if cloumn_list[2] == "\N" else cloumn_list[2]
+                elif self.task_conf['tag'] == "user_audit_reject_reason_pinzhuan":
+                    if cloumn_list[2].find(",") > 0:
+                        cut = cloumn_list[2].find(",")
+                        cloumn_list[2] = cloumn_list[2][:cut].strip()
+                    tag = "0" if cloumn_list[2] == "\N" else cloumn_list[2]
+                else:
+                    tag = "0" if cloumn_list[int(self.task_conf['tag'])] == "\N" else \
+                        cloumn_list[int(self.task_conf['tag'])].decode("gbk").encode("utf8")
+
+                if self.task_conf['product_id'] == "''":
+                    product_id = "0"
+                elif self.task_conf['product_id'] == "pinzhuan":
+                    product_id = "998"
+                else:
+                    product_id = "0" if cloumn_list[int(self.task_conf['product_id'])] == "\N" \
+                        else cloumn_list[int(self.task_conf['product_id'])]
+
+                if self.task_conf['area'] == "''":
+                    area = "0"
+                elif self.task_conf['area'] == "pinzhuan":
+                    area = "10104"
+                elif self.task_conf['area'] == "zhongxiao":
+                    area = "10101"
+                else:
+                    area = "0" if cloumn_list[int(self.task_conf['area'])] == "\N" \
+                        else cloumn_list[int(self.task_conf['area'])]
+
+                if self.task_conf['industry'] == "''":
+                    industry = "0"
+                else:
+                    industry = "0" if cloumn_list[int(self.task_conf['industry'])] == "\N" \
+                        else cloumn_list[int(self.task_conf['industry'])]
+                if self.task_conf['channel'] == "''":
+                    channel = ""
+                else:
+                    channel = "" if cloumn_list[int(self.task_conf['channel'])] == "null" or \
+                                     cloumn_list[int(self.task_conf['channel'])] == "\N" else \
+                        cloumn_list[int(self.task_conf['channel'])].decode("gbk").encode("utf8")
+
+                if self.task_conf['kpi_key'] == "10005":
+                    sql = """insert into feed_compete_data""" \
+                          """(time_type, deal_time, kpi_key, kpi_value, """ \
+                          """tag, product_id, area, industry,channel, add_time) """ \
+                          """values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
+                else:
+                    sql = """insert into kpi_data""" \
+                          """(time_type, deal_time, kpi_key, kpi_value, """ \
+                          """tag, product_id, area, industry,channel, add_time) """ \
+                          """values(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
+
+                values = [(time_type, self.task_time, kpi_key, kpi_value,
+                           tag, product_id,
+                           area, industry, channel, self.timenow)]
+                success = db_handler.insert(sql, values)
+                if not success:
+                    print "insert db failed, sql:[%s]" % sql
+                    return False
+
+        return True
+
+if __name__ == "__main__":
+    loadtodb()
